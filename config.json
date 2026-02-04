@@ -1,0 +1,398 @@
+{
+    "name": "Survey Fraud Prevention",
+    "namespace": "CERCHECW\\SurveyFraudPrevention",
+    "description": "Multi-layer fraud prevention for public surveys: IP geolocation, reCAPTCHA bot detection, and SMS verification. No PII is stored.",
+    "documentation": "README.md",
+    "authors": [
+        {
+            "name": "Kshitiz Pokhrel",
+            "email": "kpokhrel@torontomu.ca",
+            "institution": "CERC in Health Equity & Community Well-Being, Toronto Metropolitan University"
+        },
+        {
+            "name": "Ryan McRonald",
+            "email": "rmcronald@uvic.ca",
+            "institution": "University of Victoria"
+        }
+    ],
+    "framework-version": 16,
+    "compatibility": {
+        "php-version-min": "7.4.0",
+        "redcap-version-min": "15.0.0"
+    },
+
+    "system-settings": [
+        {
+            "key": "system-config-header",
+            "name": "<h4 style='color:#800000;'>System Configuration</h4><p style='color:#666;'>These settings are configured by REDCap administrators and apply globally. Project administrators cannot modify these credentials.</p><hr>",
+            "type": "descriptive"
+        },
+        {
+            "key": "twilio-header",
+            "name": "<h5>Twilio Verify API Credentials</h5>",
+            "type": "descriptive"
+        },
+        {
+            "key": "twilio-account-sid",
+            "name": "<b>Twilio Account SID</b><br><small>Your Account SID from Twilio Console (starts with AC)</small>",
+            "type": "text",
+            "required": true
+        },
+        {
+            "key": "twilio-auth-token",
+            "name": "<b>Twilio Auth Token</b><br><small>Your Auth Token from Twilio Console (kept secure)</small>",
+            "type": "password",
+            "required": true
+        },
+        {
+            "key": "twilio-verify-service-sid",
+            "name": "<b>Twilio Verify Service SID</b><br><small>From Twilio Console > Verify > Services (starts with VA)</small>",
+            "type": "text",
+            "required": true
+        },
+        {
+            "key": "ip-geolocation-header",
+            "name": "<hr><h5>IP Geolocation Service</h5>",
+            "type": "descriptive"
+        },
+        {
+            "key": "ip-geolocation-service",
+            "name": "<b>IP Geolocation Provider</b><br><small>Service used for IP-based country verification</small>",
+            "type": "dropdown",
+            "choices": [
+                {"value": "ip-api", "name": "ip-api.com (Free - 45 requests/minute limit)"},
+                {"value": "ipinfo", "name": "ipinfo.io (Paid - Requires API token)"},
+                {"value": "disabled", "name": "Disabled (No IP geolocation available)"}
+            ],
+            "default": "ip-api"
+        },
+        {
+            "key": "ipinfo-api-token",
+            "name": "<b>ipinfo.io API Token</b><br><small>Required only if using ipinfo.io</small>",
+            "type": "password",
+            "branchingLogic": {
+                "field": "ip-geolocation-service",
+                "value": "ipinfo"
+            }
+        },
+        {
+            "key": "ip-api-failure-mode",
+            "name": "<b>IP API Failure Mode</b><br><small>What to do when geolocation API is unavailable</small>",
+            "type": "dropdown",
+            "choices": [
+                {"value": "fail-open", "name": "Fail Open (Allow access if API unavailable)"},
+                {"value": "fail-closed", "name": "Fail Closed (Block access if API unavailable)"}
+            ],
+            "default": "fail-open"
+        },
+        {
+            "key": "recaptcha-header",
+            "name": "<hr><h5>Google reCAPTCHA v3</h5>",
+            "type": "descriptive"
+        },
+        {
+            "key": "recaptcha-site-key",
+            "name": "<b>reCAPTCHA Site Key</b><br><small>Site key from Google reCAPTCHA admin console</small>",
+            "type": "text"
+        },
+        {
+            "key": "recaptcha-secret-key",
+            "name": "<b>reCAPTCHA Secret Key</b><br><small>Secret key from Google reCAPTCHA admin console</small>",
+            "type": "password"
+        },
+        {
+            "key": "logging-header",
+            "name": "<hr><h5>Logging Settings</h5>",
+            "type": "descriptive"
+        },
+        {
+            "key": "global-enable-logging",
+            "name": "<b>Enable Module Logging</b><br><small>Log verification attempts (privacy-safe: NO IP or phone numbers stored)</small>",
+            "type": "checkbox",
+            "default": true
+        }
+    ],
+
+    "project-settings": [
+        {
+            "key": "project-config-header",
+            "name": "<h4 style='color:#800000;'>Project Verification Settings</h4><p style='color:#666;'>Configure verification requirements for your study. Both IP and phone verification are optional and independent.</p><hr>",
+            "type": "descriptive"
+        },
+        {
+            "key": "verification-instruments",
+            "name": "<b>Instruments Requiring Verification</b><br><small>Select which survey instruments require verification before access</small>",
+            "type": "form-list",
+            "select2": true,
+            "repeatable": true
+        },
+        {
+            "key": "ip-verification-header",
+            "name": "<hr><h5 style='color:#006600;'>Layer 1: IP-Based Country Verification</h5><p style='color:#666;'><strong>Privacy Note:</strong> IP addresses are used only for verification and are NOT stored anywhere.</p>",
+            "type": "descriptive"
+        },
+        {
+            "key": "enable-ip-verification",
+            "name": "<b>Enable IP-Based Verification</b><br><small>Verify participant location based on IP address</small>",
+            "type": "checkbox"
+        },
+        {
+            "key": "ip-allowed-countries",
+            "name": "<b>Allowed Countries (IP)</b><br><small>Select countries allowed for IP verification</small>",
+            "type": "dropdown",
+            "select2": true,
+            "repeatable": true,
+            "choices": [],
+            "branchingLogic": {
+                "field": "enable-ip-verification",
+                "value": "1"
+            }
+        },
+        {
+            "key": "block-vpn",
+            "name": "<b>Block VPN/Proxy Connections</b><br><small>Reject connections from known VPNs and proxies</small>",
+            "type": "checkbox",
+            "branchingLogic": {
+                "field": "enable-ip-verification",
+                "value": "1"
+            }
+        },
+        {
+            "key": "block-datacenter",
+            "name": "<b>Block Datacenter/Hosting IPs</b><br><small>Reject connections from data centers and cloud hosting providers</small>",
+            "type": "checkbox",
+            "branchingLogic": {
+                "field": "enable-ip-verification",
+                "value": "1"
+            }
+        },
+        {
+            "key": "ip-block-message-vpn",
+            "name": "<b>Custom VPN Block Message</b><br><small>Message shown when VPN/proxy is detected (leave blank for default)</small>",
+            "type": "textarea",
+            "branchingLogic": {
+                "field": "block-vpn",
+                "value": "1"
+            }
+        },
+        {
+            "key": "ip-block-message-country",
+            "name": "<b>Custom Country Block Message</b><br><small>Message shown when IP country is not allowed (leave blank for default)</small>",
+            "type": "textarea",
+            "branchingLogic": {
+                "field": "enable-ip-verification",
+                "value": "1"
+            }
+        },
+        {
+            "key": "recaptcha-project-header",
+            "name": "<hr><h5 style='color:#006600;'>Layer 2: Google reCAPTCHA v3 (Bot Detection)</h5><p style='color:#666;'>Invisible bot detection that runs in the background. No user interaction required.</p>",
+            "type": "descriptive"
+        },
+        {
+            "key": "enable-recaptcha",
+            "name": "<b>Enable reCAPTCHA v3</b><br><small>Add invisible bot detection to verification flow</small>",
+            "type": "checkbox"
+        },
+        {
+            "key": "recaptcha-timing",
+            "name": "<b>When to Run reCAPTCHA</b><br><small>Choose when bot detection verification occurs</small>",
+            "type": "dropdown",
+            "choices": [
+                {"value": "page_load", "name": "On Page Load (runs after IP check passes)"},
+                {"value": "send_code", "name": "When Clicking 'Send Code' (observes phone form interaction)"},
+                {"value": "survey_submit", "name": "On Survey Submit (most behavioral data, but SMS already sent)"}
+            ],
+            "default": "page_load",
+            "branchingLogic": {
+                "field": "enable-recaptcha",
+                "value": "1"
+            }
+        },
+        {
+            "key": "recaptcha-min-score",
+            "name": "<b>Minimum Score Threshold</b><br><small>Score from 0.0 (bot) to 1.0 (human). Recommended: 0.5</small>",
+            "type": "dropdown",
+            "choices": [
+                {"value": "0.3", "name": "0.3 (Lenient - more false negatives)"},
+                {"value": "0.5", "name": "0.5 (Balanced - Recommended)"},
+                {"value": "0.7", "name": "0.7 (Strict - may block some humans)"},
+                {"value": "0.9", "name": "0.9 (Very Strict - high false positive risk)"}
+            ],
+            "default": "0.5",
+            "branchingLogic": {
+                "field": "enable-recaptcha",
+                "value": "1"
+            }
+        },
+        {
+            "key": "recaptcha-failure-mode",
+            "name": "<b>reCAPTCHA Failure Mode</b><br><small>What to do when reCAPTCHA API is unavailable</small>",
+            "type": "dropdown",
+            "choices": [
+                {"value": "fail-open", "name": "Fail Open (Allow access if API unavailable)"},
+                {"value": "fail-closed", "name": "Fail Closed (Block access if API unavailable)"}
+            ],
+            "default": "fail-open",
+            "branchingLogic": {
+                "field": "enable-recaptcha",
+                "value": "1"
+            }
+        },
+        {
+            "key": "recaptcha-block-message",
+            "name": "<b>Custom Bot Detection Message</b><br><small>Message shown when reCAPTCHA detects bot behavior (leave blank for default)</small>",
+            "type": "textarea",
+            "branchingLogic": {
+                "field": "enable-recaptcha",
+                "value": "1"
+            }
+        },
+        {
+            "key": "phone-otp-header",
+            "name": "<hr><h5 style='color:#006600;'>Layer 3: Phone Number Verification (OTP)</h5><p style='color:#666;'><strong>Privacy Note:</strong> Phone numbers are used only for OTP verification and are NOT stored in any database or log.</p>",
+            "type": "descriptive"
+        },
+        {
+            "key": "enable-phone-otp",
+            "name": "<b>Enable Phone OTP Verification</b><br><small>Require SMS one-time password verification</small>",
+            "type": "checkbox"
+        },
+        {
+            "key": "phone-allowed-countries",
+            "name": "<b>Allowed Countries (Phone)</b><br><small>Select countries allowed for phone verification</small>",
+            "type": "dropdown",
+            "select2": true,
+            "repeatable": true,
+            "choices": [],
+            "branchingLogic": {
+                "field": "enable-phone-otp",
+                "value": "1"
+            }
+        },
+        {
+            "key": "canada-us-distinction",
+            "name": "<b>North American Phone Numbers (+1)</b><br><small>How to handle Canadian and US phone numbers (both use +1 country code)</small>",
+            "type": "dropdown",
+            "choices": [
+                {"value": "accept_both", "name": "Accept Any +1 Number (Default)"},
+                {"value": "ip_match", "name": "Must Match IP Country"}
+            ],
+            "default": "accept_both",
+            "branchingLogic": {
+                "field": "enable-phone-otp",
+                "value": "1"
+            }
+        },
+        {
+            "key": "phone-custom-message",
+            "name": "<b>Custom Phone Verification Message</b><br><small>Message displayed on phone verification overlay (leave blank for default)</small>",
+            "type": "textarea",
+            "branchingLogic": {
+                "field": "enable-phone-otp",
+                "value": "1"
+            }
+        },
+        {
+            "key": "prevent-phone-reuse",
+            "name": "<b>Prevent Phone Number Reuse</b><br><small>Each phone number can only be used once per record. Prevents the same phone from creating multiple survey responses. A hash (not the actual phone number) is stored to enable this check.</small>",
+            "type": "checkbox",
+            "default": true,
+            "branchingLogic": {
+                "field": "enable-phone-otp",
+                "value": "1"
+            }
+        },
+        {
+            "key": "block-voip",
+            "name": "<b>Block VoIP Numbers</b><br><small>Reject internet-based phone numbers. Uses Twilio Lookup API Line Type Intelligence ($0.008 per lookup). <b>Note:</b> Canadian numbers require <a href='https://help.twilio.com/articles/360004563433' target='_blank'>CLNPC authorization</a>.</small>",
+            "type": "dropdown",
+            "choices": [
+                {"value": "", "name": "Disabled (allow all VoIP)"},
+                {"value": "non-fixed", "name": "Block Non-Fixed VoIP Only (Google Voice, TextNow, etc.) - Recommended"},
+                {"value": "all", "name": "Block All VoIP (including business phone systems)"}
+            ],
+            "branchingLogic": {
+                "field": "enable-phone-otp",
+                "value": "1"
+            }
+        },
+        {
+            "key": "voip-block-message",
+            "name": "<b>Custom VoIP Block Message</b><br><small>Message shown when VoIP number is detected (leave blank for default)</small>",
+            "type": "textarea",
+            "branchingLogic": {
+                "type": "or",
+                "conditions": [
+                    {"field": "block-voip", "value": "non-fixed"},
+                    {"field": "block-voip", "value": "all"}
+                ]
+            }
+        },
+        {
+            "key": "rate-limiting-header",
+            "name": "<hr><h5>Rate Limiting</h5>",
+            "type": "descriptive"
+        },
+        {
+            "key": "enable-rate-limiting",
+            "name": "<b>Enable Rate Limiting</b><br><small>Limit OTP requests to prevent abuse</small>",
+            "type": "checkbox",
+            "default": true
+        },
+        {
+            "key": "max-otp-requests",
+            "name": "<b>Max OTP Requests Per Hour</b><br><small>Maximum OTP requests allowed per session hour</small>",
+            "type": "text",
+            "default": "5",
+            "branchingLogic": {
+                "field": "enable-rate-limiting",
+                "value": "1"
+            }
+        },
+        {
+            "key": "otp-expiration-minutes",
+            "name": "<b>OTP Expiration (Minutes)</b><br><small>How long the verification code remains valid</small>",
+            "type": "text",
+            "default": "10"
+        },
+        {
+            "key": "privacy-notice-header",
+            "name": "<hr><h5>Privacy Notice</h5>",
+            "type": "descriptive"
+        },
+        {
+            "key": "show-privacy-notice",
+            "name": "<b>Show Privacy Notice to Participants</b><br><small>Display privacy statement on verification screen</small>",
+            "type": "checkbox",
+            "default": true
+        },
+        {
+            "key": "custom-privacy-notice",
+            "name": "<b>Custom Privacy Notice Text</b><br><small>Leave blank for default privacy notice</small>",
+            "type": "textarea"
+        }
+    ],
+
+    "hooks": [
+        {
+            "hook": "redcap_survey_page_top",
+            "description": "Intercept survey page load to inject verification (IP, reCAPTCHA, and/or Phone OTP)"
+        },
+        {
+            "hook": "redcap_module_configuration_settings",
+            "description": "Dynamically populate country dropdown choices from countries.php"
+        }
+    ],
+    "crons": [],
+    "links": {
+        "project": [],
+        "control-center": []
+    },
+
+    "no-auth-pages": [
+        "ajax_handler"
+    ],
+
+    "enable-no-auth-logging": true
+}
