@@ -127,6 +127,16 @@ class SurveyFraudPrevention extends AbstractExternalModule
             session_start();
         }
 
+        // DEBUG: Log session state on every page load (remove after debugging)
+        $debugSessionId = session_id();
+        $debugOtpKeys = [];
+        foreach ($_SESSION as $k => $v) {
+            if (strpos($k, 'otp_') === 0 || strpos($k, 'ip_') === 0 || strpos($k, 'recaptcha_') === 0) {
+                $debugOtpKeys[$k] = $v;
+            }
+        }
+        error_log("SFP DEBUG [hook] instrument=$instrument survey_hash=$survey_hash session_id=$debugSessionId session_keys=" . json_encode($debugOtpKeys));
+
         // Skip if this form doesn't need verification
         if (!$this->needsVerification($instrument)) {
             return;
@@ -896,6 +906,9 @@ class SurveyFraudPrevention extends AbstractExternalModule
             $sessionSeed = $ctx['session_seed'] ?? $surveyHash;
             $key = self::OTP_SESSION . hash('sha256', $sessionSeed . '_otp');
             $_SESSION[$key] = true;
+
+            // DEBUG: Log session state after OTP verification (remove after debugging)
+            error_log("SFP DEBUG [verifyOTP] session_id=" . session_id() . " sessionSeed=$sessionSeed key=$key session_key_set=true");
 
             if ($this->getProjectSetting('prevent-phone-reuse')) {
                 $ctx = $_SESSION['otp_survey_context'] ?? [];
