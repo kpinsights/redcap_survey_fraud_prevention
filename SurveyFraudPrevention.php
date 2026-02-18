@@ -132,6 +132,11 @@ class SurveyFraudPrevention extends AbstractExternalModule
             return;
         }
 
+        // Build a stable session seed from instrument identity (not survey_hash,
+        // which changes on each page of a multi-page instrument and would
+        // re-trigger verification when navigating between pages).
+        $sessionSeed = $project_id . '_' . $instrument . '_' . $event_id;
+
         // Store context for ajax calls
         $_SESSION['otp_survey_context'] = [
             'project_id' => $project_id,
@@ -139,16 +144,17 @@ class SurveyFraudPrevention extends AbstractExternalModule
             'instrument' => $instrument,
             'event_id' => $event_id,
             'survey_hash' => $survey_hash,
+            'session_seed' => $sessionSeed,
             'response_id' => $response_id,
             'repeat_instance' => $repeat_instance
         ];
 
         // Layer 1: IP check
         if ($this->getProjectSetting('enable-ip-verification')) {
-            $ipKey = self::IP_SESSION . hash('sha256', $survey_hash . '_ip');
+            $ipKey = self::IP_SESSION . hash('sha256', $sessionSeed . '_ip');
 
             if (empty($_SESSION[$ipKey])) {
-                $ipCheck = $this->checkIPLocation($survey_hash);
+                $ipCheck = $this->checkIPLocation($sessionSeed);
 
                 if (!$ipCheck['ok']) {
                     $this->showIPBlockPage($ipCheck['reason'], $ipCheck['country'] ?? '');
@@ -162,7 +168,7 @@ class SurveyFraudPrevention extends AbstractExternalModule
         // Other timings (send_code, survey_submit) are handled in JS/ajax
         if ($this->getProjectSetting('enable-recaptcha') && $this->hasRecaptchaCredentials()) {
             $recaptchaTiming = $this->getProjectSetting('recaptcha-timing') ?: 'page_load';
-            $recaptchaKey = self::RECAPTCHA_SESSION . hash('sha256', $survey_hash . '_recaptcha');
+            $recaptchaKey = self::RECAPTCHA_SESSION . hash('sha256', $sessionSeed . '_recaptcha');
 
             if ($recaptchaTiming === 'page_load' && empty($_SESSION[$recaptchaKey])) {
                 // Inject reCAPTCHA script and handle verification via AJAX immediately
@@ -172,7 +178,7 @@ class SurveyFraudPrevention extends AbstractExternalModule
 
         // Layer 3: Phone OTP
         if ($this->getProjectSetting('enable-phone-otp') && $this->hasTwilioCredentials()) {
-            $otpKey = self::OTP_SESSION . hash('sha256', $survey_hash . '_otp');
+            $otpKey = self::OTP_SESSION . hash('sha256', $sessionSeed . '_otp');
 
             if (empty($_SESSION[$otpKey])) {
                 $this->showPhoneVerification($survey_hash);
@@ -417,6 +423,10 @@ class SurveyFraudPrevention extends AbstractExternalModule
         $minScore = (float)($this->getProjectSetting('recaptcha-min-score') ?: '0.5');
         $failMode = $this->getProjectSetting('recaptcha-failure-mode') ?: 'fail-open';
 
+        // Use stable session seed for session keys
+        $ctx = $_SESSION['otp_survey_context'] ?? [];
+        $sessionSeed = $ctx['session_seed'] ?? $surveyHash;
+
         if (empty($token)) {
             $this->logEvent('reCAPTCHA failed - no token provided');
             return ['success' => false, 'error' => 'Verification failed. Please refresh and try again.'];
@@ -437,13 +447,13 @@ class SurveyFraudPrevention extends AbstractExternalModule
         $resp = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $curlError = curl_error($ch);
-        
+
         if ($curlError || $httpCode !== 200 || empty($resp)) {
             $this->logEvent('reCAPTCHA API error: ' . ($curlError ?: "HTTP $httpCode"));
 
             if ($failMode === 'fail-open') {
                 $this->logEvent('reCAPTCHA skipped - API error, fail-open policy');
-                $this->saveRecaptchaStatus($surveyHash, true);
+                $this->saveRecaptchaStatus($sessionSeed, true);
                 return ['success' => true, 'score' => null, 'reason' => 'api_error_failopen'];
             }
 
@@ -471,7 +481,7 @@ class SurveyFraudPrevention extends AbstractExternalModule
             ];
         }
 
-        $this->saveRecaptchaStatus($surveyHash, true);
+        $this->saveRecaptchaStatus($sessionSeed, true);
         $this->logEvent("reCAPTCHA passed - score: $score");
 
         return ['success' => true, 'score' => $score, 'reason' => 'verified'];
@@ -480,12 +490,12 @@ class SurveyFraudPrevention extends AbstractExternalModule
     /**
      * Store reCAPTCHA verification status in session
      *
-     * @param string $hash Survey hash for key derivation
+     * @param string $seed Session seed for key derivation
      * @param bool $verified Verification status
      */
-    private function saveRecaptchaStatus($hash, $verified)
+    private function saveRecaptchaStatus($seed, $verified)
     {
-        $key = self::RECAPTCHA_SESSION . hash('sha256', $hash . '_recaptcha');
+        $key = self::RECAPTCHA_SESSION . hash('sha256', $seed . '_recaptcha');
         $_SESSION[$key] = $verified;
     }
 
@@ -654,6 +664,10 @@ class SurveyFraudPrevention extends AbstractExternalModule
      */
     public function validatePhoneCountry($phone, $surveyHash)
     {
+        // Use stable session seed for IP country lookup
+        $ctx = $_SESSION['otp_survey_context'] ?? [];
+        $sessionSeed = $ctx['session_seed'] ?? $surveyHash;
+
         $phoneCountry = $this->getCountryFromPhonePrefix($phone);
 
         if (empty($phoneCountry)) {
@@ -671,7 +685,7 @@ class SurveyFraudPrevention extends AbstractExternalModule
         // Special handling for +1 (NANP - North American Numbering Plan)
         // Canada and US share the +1 prefix, so we use the canada-us-distinction setting
         if ($phoneCountry === 'NANP') {
-            $phoneCountry = $this->resolveNANPCountry($surveyHash, $allowed);
+            $phoneCountry = $this->resolveNANPCountry($sessionSeed, $allowed);
         }
 
         if (!empty($allowed) && !in_array($phoneCountry, $allowed)) {
@@ -738,11 +752,11 @@ class SurveyFraudPrevention extends AbstractExternalModule
      * - ip_match: Use the detected IP country. More restrictive but may
      *   block legitimate users traveling between countries.
      *
-     * @param string $surveyHash Survey identifier for IP country lookup
+     * @param string $sessionSeed Session seed for IP country lookup
      * @param array $allowedCountries List of allowed country codes
      * @return string Resolved country code (CA, US, or NANP if neither allowed)
      */
-    private function resolveNANPCountry($surveyHash, $allowedCountries)
+    private function resolveNANPCountry($sessionSeed, $allowedCountries)
     {
         $method = $this->getProjectSetting('canada-us-distinction') ?: 'accept_both';
 
@@ -756,7 +770,7 @@ class SurveyFraudPrevention extends AbstractExternalModule
         }
 
         if ($method === 'ip_match') {
-            $ipCountry = $this->getIPCountry($surveyHash);
+            $ipCountry = $this->getIPCountry($sessionSeed);
 
             if ($ipCountry === 'CA' || $ipCountry === 'US') {
                 return $ipCountry;
@@ -877,7 +891,10 @@ class SurveyFraudPrevention extends AbstractExternalModule
         $result = $this->twilioRequest($url, ['To' => $phone, 'Code' => $code], $sid, $token);
 
         if ($result['success'] && ($result['data']['status'] ?? '') === 'approved') {
-            $key = self::OTP_SESSION . hash('sha256', $surveyHash . '_otp');
+            // Use stable session seed for session key
+            $ctx = $_SESSION['otp_survey_context'] ?? [];
+            $sessionSeed = $ctx['session_seed'] ?? $surveyHash;
+            $key = self::OTP_SESSION . hash('sha256', $sessionSeed . '_otp');
             $_SESSION[$key] = true;
 
             if ($this->getProjectSetting('prevent-phone-reuse')) {
@@ -1209,13 +1226,13 @@ class SurveyFraudPrevention extends AbstractExternalModule
     /**
      * Store IP verification status in session
      *
-     * @param string $hash Survey hash for key derivation
+     * @param string $seed Session seed for key derivation
      * @param bool $verified Verification status
      * @param string $country Detected country code
      */
-    private function saveIPStatus($hash, $verified, $country)
+    private function saveIPStatus($seed, $verified, $country)
     {
-        $key = self::IP_SESSION . hash('sha256', $hash . '_ip');
+        $key = self::IP_SESSION . hash('sha256', $seed . '_ip');
         $_SESSION[$key] = $verified;
         $_SESSION[$key . '_country'] = $country;
     }
@@ -1223,12 +1240,12 @@ class SurveyFraudPrevention extends AbstractExternalModule
     /**
      * Retrieve stored IP country from session
      *
-     * @param string $hash Survey hash for key derivation
+     * @param string $seed Session seed for key derivation
      * @return string Country code or empty string
      */
-    public function getIPCountry($hash)
+    public function getIPCountry($seed)
     {
-        $key = self::IP_SESSION . hash('sha256', $hash . '_ip');
+        $key = self::IP_SESSION . hash('sha256', $seed . '_ip');
         return $_SESSION[$key . '_country'] ?? '';
     }
 
@@ -1394,7 +1411,9 @@ class SurveyFraudPrevention extends AbstractExternalModule
         $allowedCountries = $this->getProjectSetting('phone-allowed-countries') ?: [];
         if (!is_array($allowedCountries)) $allowedCountries = [$allowedCountries];
         $allowedCountries = array_filter($allowedCountries);
-        $ipCountry = $this->getIPCountry($surveyHash);
+        $ctx = $_SESSION['otp_survey_context'] ?? [];
+        $sessionSeed = $ctx['session_seed'] ?? $surveyHash;
+        $ipCountry = $this->getIPCountry($sessionSeed);
 
         // Build country labels from config
         $countryLabels = [];
