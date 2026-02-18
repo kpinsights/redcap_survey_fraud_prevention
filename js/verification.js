@@ -418,6 +418,14 @@
             form.append('redcap_csrf_token', config.csrfToken);
         }
 
+        // Pass survey page session info so AJAX handler can write to the correct session
+        if (config.surveySessionId) {
+            form.append('survey_session_id', config.surveySessionId);
+        }
+        if (config.sessionSeed) {
+            form.append('session_seed', config.sessionSeed);
+        }
+
         for (var k in data) {
             if (data.hasOwnProperty(k)) {
                 form.append(k, data[k]);

@@ -6,6 +6,11 @@
  * verification overlay. Loaded via REDCap's no-auth page mechanism for
  * survey respondents who are not logged in.
  *
+ * Note: The AJAX endpoint runs in a different PHP session than the survey
+ * page. After successful verification, we write the status flag to the
+ * survey page's session (identified by survey_session_id) so the hook
+ * can read it on subsequent page loads.
+ *
  * @package    CERCHECW\SurveyFraudPrevention
  */
 
@@ -20,6 +25,35 @@ function respond($data) {
     header('Content-Type: application/json');
     echo json_encode($data);
     exit;
+}
+
+/**
+ * Write a verification flag to the survey page's PHP session.
+ *
+ * The AJAX handler runs in a separate session from the survey page.
+ * This function closes the current session, opens the survey page's
+ * session by ID, writes the key, then restores the original session.
+ *
+ * @param string $surveySessionId The survey page's PHP session ID
+ * @param string $key Session key to set
+ * @param mixed $value Value to store
+ */
+function writeSurveySession($surveySessionId, $key, $value) {
+    if (empty($surveySessionId)) return;
+
+    // Save current session ID and close it
+    $currentSessionId = session_id();
+    session_write_close();
+
+    // Open the survey page's session
+    session_id($surveySessionId);
+    session_start();
+    $_SESSION[$key] = $value;
+    session_write_close();
+
+    // Restore the AJAX session
+    session_id($currentSessionId);
+    session_start();
 }
 
 set_error_handler(function($severity, $message, $file, $line) {
@@ -44,6 +78,8 @@ try {
     $hash = preg_replace('/[^a-zA-Z0-9]/', '', $_POST['survey_hash'] ?? '');
     $recaptchaToken = $_POST['recaptcha_token'] ?? '';
     $csrfToken = $_POST['redcap_csrf_token'] ?? '';
+    $surveySessionId = preg_replace('/[^a-zA-Z0-9,-]/', '', $_POST['survey_session_id'] ?? '');
+    $sessionSeed = preg_replace('/[^a-zA-Z0-9_]/', '', $_POST['session_seed'] ?? '');
 
     if (!$action) {
         respond(['success' => false, 'error' => 'No action specified']);
@@ -87,7 +123,15 @@ try {
             if (!$hash) {
                 respond(['success' => false, 'error' => 'Survey context missing. Please refresh the page.']);
             }
-            respond($module->verifyOTP($phone, $code, $hash));
+            $result = $module->verifyOTP($phone, $code, $hash);
+
+            // On success, write the OTP verified flag to the survey page's session
+            if ($result['success'] && $surveySessionId && $sessionSeed) {
+                $otpKey = 'otp_verified_' . hash('sha256', $sessionSeed . '_otp');
+                writeSurveySession($surveySessionId, $otpKey, true);
+            }
+
+            respond($result);
             break;
 
         case 'validate_phone':
@@ -110,7 +154,15 @@ try {
             if (!$surveyHash) {
                 respond(['success' => false, 'error' => 'Survey context missing. Please refresh the page.']);
             }
-            respond($module->verifyRecaptcha($recaptchaToken, $surveyHash));
+            $result = $module->verifyRecaptcha($recaptchaToken, $surveyHash);
+
+            // On success, write the reCAPTCHA verified flag to the survey page's session
+            if ($result['success'] && $surveySessionId && $sessionSeed) {
+                $recaptchaKey = 'recaptcha_verified_' . hash('sha256', $sessionSeed . '_recaptcha');
+                writeSurveySession($surveySessionId, $recaptchaKey, true);
+            }
+
+            respond($result);
             break;
 
         default:

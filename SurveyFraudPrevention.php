@@ -127,16 +127,6 @@ class SurveyFraudPrevention extends AbstractExternalModule
             session_start();
         }
 
-        // DEBUG: Log session state on every page load (remove after debugging)
-        $debugSessionId = session_id();
-        $debugOtpKeys = [];
-        foreach ($_SESSION as $k => $v) {
-            if (strpos($k, 'otp_') === 0 || strpos($k, 'ip_') === 0 || strpos($k, 'recaptcha_') === 0) {
-                $debugOtpKeys[$k] = $v;
-            }
-        }
-        error_log("SFP DEBUG [hook] instrument=$instrument survey_hash=$survey_hash session_id=$debugSessionId session_keys=" . json_encode($debugOtpKeys));
-
         // Skip if this form doesn't need verification
         if (!$this->needsVerification($instrument)) {
             return;
@@ -537,7 +527,9 @@ class SurveyFraudPrevention extends AbstractExternalModule
                         headers: {'Content-Type': 'application/x-www-form-urlencoded'},
                         body: 'action=verify_recaptcha&recaptcha_token=' + encodeURIComponent(token) +
                               '&survey_hash=' + encodeURIComponent(<?= json_encode($surveyHash) ?>) +
-                              '&redcap_csrf_token=' + encodeURIComponent(<?= json_encode($csrfToken) ?>)
+                              '&redcap_csrf_token=' + encodeURIComponent(<?= json_encode($csrfToken) ?>) +
+                              '&survey_session_id=' + encodeURIComponent(<?= json_encode(session_id()) ?>) +
+                              '&session_seed=' + encodeURIComponent(<?= json_encode($_SESSION['otp_survey_context']['session_seed'] ?? '') ?>)
                     })
                     .then(function(response) { return response.json(); })
                     .then(function(data) {
@@ -613,7 +605,9 @@ class SurveyFraudPrevention extends AbstractExternalModule
                             headers: {'Content-Type': 'application/x-www-form-urlencoded'},
                             body: 'action=verify_recaptcha&recaptcha_token=' + encodeURIComponent(token) +
                                   '&survey_hash=' + encodeURIComponent(<?= json_encode($surveyHash) ?>) +
-                                  '&redcap_csrf_token=' + encodeURIComponent(<?= json_encode($csrfToken) ?>)
+                                  '&redcap_csrf_token=' + encodeURIComponent(<?= json_encode($csrfToken) ?>) +
+                                  '&survey_session_id=' + encodeURIComponent(<?= json_encode(session_id()) ?>) +
+                                  '&session_seed=' + encodeURIComponent(<?= json_encode($_SESSION['otp_survey_context']['session_seed'] ?? '') ?>)
                         })
                         .then(function(response) { return response.json(); })
                         .then(function(data) {
@@ -906,9 +900,6 @@ class SurveyFraudPrevention extends AbstractExternalModule
             $sessionSeed = $ctx['session_seed'] ?? $surveyHash;
             $key = self::OTP_SESSION . hash('sha256', $sessionSeed . '_otp');
             $_SESSION[$key] = true;
-
-            // DEBUG: Log session state after OTP verification (remove after debugging)
-            error_log("SFP DEBUG [verifyOTP] session_id=" . session_id() . " sessionSeed=$sessionSeed key=$key session_key_set=true");
 
             if ($this->getProjectSetting('prevent-phone-reuse')) {
                 $ctx = $_SESSION['otp_survey_context'] ?? [];
@@ -1575,6 +1566,8 @@ class SurveyFraudPrevention extends AbstractExternalModule
                 verifyUrl: <?= json_encode($ajaxUrl) ?>,
                 csrfToken: <?= json_encode($csrfToken) ?>,
                 surveyHash: <?= json_encode($surveyHash) ?>,
+                sessionSeed: <?= json_encode($sessionSeed) ?>,
+                surveySessionId: <?= json_encode(session_id()) ?>,
                 otpExpiration: <?= $expiry ?>,
                 allowedCountries: <?= json_encode($allowedCountries) ?>,
                 ipCountry: <?= json_encode($ipCountry) ?>,
