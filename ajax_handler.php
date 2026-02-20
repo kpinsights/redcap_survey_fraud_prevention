@@ -129,6 +129,12 @@ try {
             if ($result['success'] && $surveySessionId && $sessionSeed) {
                 $otpKey = 'otp_verified_' . hash('sha256', $sessionSeed . '_otp');
                 writeSurveySession($surveySessionId, $otpKey, true);
+
+                // Also set project-level flag so subsequent instruments skip re-verification
+                if ($surveyContext) {
+                    $projectKey = 'sfp_project_verified_' . $surveyContext['project_id'] . '_' . $surveyContext['event_id'];
+                    writeSurveySession($surveySessionId, $projectKey, true);
+                }
             }
 
             respond($result);
@@ -160,6 +166,12 @@ try {
             if ($result['success'] && $surveySessionId && $sessionSeed) {
                 $recaptchaKey = 'recaptcha_verified_' . hash('sha256', $sessionSeed . '_recaptcha');
                 writeSurveySession($surveySessionId, $recaptchaKey, true);
+
+                // Also set project-level flag so subsequent instruments skip re-verification
+                if ($surveyContext) {
+                    $projectKey = 'sfp_project_verified_' . $surveyContext['project_id'] . '_' . $surveyContext['event_id'];
+                    writeSurveySession($surveySessionId, $projectKey, true);
+                }
             }
 
             respond($result);

@@ -43,6 +43,9 @@ class SurveyFraudPrevention extends AbstractExternalModule
     /** @var string Session key prefix for OTP verification status */
     private const OTP_SESSION = 'otp_verified_';
 
+    /** @var string Session key prefix for project-level verification (cross-instrument) */
+    private const PROJECT_VERIFIED_SESSION = 'sfp_project_verified_';
+
     /** @var int Rate limit window in hours */
     private const RATE_LIMIT_HOURS = 1;
 
@@ -132,6 +135,15 @@ class SurveyFraudPrevention extends AbstractExternalModule
             return;
         }
 
+        // Check if already verified on another instrument in this session.
+        // This prevents re-prompting when participants auto-continue between
+        // instruments, while still requiring verification for new sessions
+        // (e.g., someone accessing a later instrument via a shared link).
+        $projectKey = self::PROJECT_VERIFIED_SESSION . $project_id . '_' . $event_id;
+        if (!empty($_SESSION[$projectKey])) {
+            return;
+        }
+
         // Build a stable session seed from instrument identity (not survey_hash,
         // which changes on each page of a multi-page instrument and would
         // re-trigger verification when navigating between pages).
@@ -185,6 +197,10 @@ class SurveyFraudPrevention extends AbstractExternalModule
                 return;
             }
         }
+
+        // All blocking layers passed — mark this session as verified at the
+        // project level so subsequent instruments don't re-prompt.
+        $_SESSION[$projectKey] = true;
 
         // reCAPTCHA on survey submit (runs after all other layers pass)
         if ($this->getProjectSetting('enable-recaptcha') && $this->hasRecaptchaCredentials()) {
@@ -483,6 +499,14 @@ class SurveyFraudPrevention extends AbstractExternalModule
 
         $this->saveRecaptchaStatus($sessionSeed, true);
         $this->logEvent("reCAPTCHA passed - score: $score");
+
+        // Mark project-level verification so subsequent instruments skip re-verification
+        $ctx = $_SESSION['otp_survey_context'] ?? [];
+        $projectId = $ctx['project_id'] ?? null;
+        $eventId = $ctx['event_id'] ?? null;
+        if ($projectId && $eventId) {
+            $_SESSION[self::PROJECT_VERIFIED_SESSION . $projectId . '_' . $eventId] = true;
+        }
 
         return ['success' => true, 'score' => $score, 'reason' => 'verified'];
     }
@@ -900,6 +924,13 @@ class SurveyFraudPrevention extends AbstractExternalModule
             $sessionSeed = $ctx['session_seed'] ?? $surveyHash;
             $key = self::OTP_SESSION . hash('sha256', $sessionSeed . '_otp');
             $_SESSION[$key] = true;
+
+            // Mark project-level verification so subsequent instruments skip re-verification
+            $projectId = $ctx['project_id'] ?? null;
+            $eventId = $ctx['event_id'] ?? null;
+            if ($projectId && $eventId) {
+                $_SESSION[self::PROJECT_VERIFIED_SESSION . $projectId . '_' . $eventId] = true;
+            }
 
             if ($this->getProjectSetting('prevent-phone-reuse')) {
                 $ctx = $_SESSION['otp_survey_context'] ?? [];
