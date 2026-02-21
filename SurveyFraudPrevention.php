@@ -346,7 +346,8 @@ class SurveyFraudPrevention extends AbstractExternalModule
 
         $resp = curl_exec($ch);
         $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        
+        curl_close($ch);
+
         if ($code !== 200 || empty($resp)) {
             return ['success' => false];
         }
@@ -381,17 +382,21 @@ class SurveyFraudPrevention extends AbstractExternalModule
             return ['success' => false];
         }
 
-        $url = self::IPINFO_ENDPOINT . $ip . '?token=' . $token;
+        // Send token via Authorization header instead of URL parameter
+        // to avoid leaking it in server/proxy logs
+        $url = self::IPINFO_ENDPOINT . $ip;
 
         $ch = curl_init($url);
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => 10
+            CURLOPT_TIMEOUT => 10,
+            CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . $token]
         ]);
 
         $resp = curl_exec($ch);
         $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        
+        curl_close($ch);
+
         if ($code !== 200 || empty($resp)) {
             return ['success' => false];
         }
@@ -463,6 +468,7 @@ class SurveyFraudPrevention extends AbstractExternalModule
         $resp = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $curlError = curl_error($ch);
+        curl_close($ch);
 
         if ($curlError || $httpCode !== 200 || empty($resp)) {
             $this->logEvent('reCAPTCHA API error: ' . ($curlError ?: "HTTP $httpCode"));
@@ -537,6 +543,7 @@ class SurveyFraudPrevention extends AbstractExternalModule
         $siteKey = $this->getSystemSetting('recaptcha-site-key');
         $ajaxUrl = $this->getUrl('ajax_handler.php', true, true);
         $csrfToken = $this->getCSRFToken();
+        $nonce = $this->getAjaxNonce();
         ?>
         <script src="https://www.google.com/recaptcha/api.js?render=<?= htmlspecialchars($siteKey) ?>"></script>
         <?php if ($timing === 'page_load'): ?>
@@ -552,6 +559,7 @@ class SurveyFraudPrevention extends AbstractExternalModule
                         body: 'action=verify_recaptcha&recaptcha_token=' + encodeURIComponent(token) +
                               '&survey_hash=' + encodeURIComponent(<?= json_encode($surveyHash) ?>) +
                               '&redcap_csrf_token=' + encodeURIComponent(<?= json_encode($csrfToken) ?>) +
+                              '&sfp_nonce=' + encodeURIComponent(<?= json_encode($nonce) ?>) +
                               '&survey_session_id=' + encodeURIComponent(<?= json_encode(session_id()) ?>) +
                               '&session_seed=' + encodeURIComponent(<?= json_encode($_SESSION['otp_survey_context']['session_seed'] ?? '') ?>)
                     })
@@ -561,13 +569,27 @@ class SurveyFraudPrevention extends AbstractExternalModule
                             // reCAPTCHA passed - session is marked, no reload needed
                             console.log('reCAPTCHA verified (page_load)');
                         } else {
-                            // Show block message
-                            document.body.innerHTML = '<div style="position:fixed;inset:0;background:rgba(0,0,0,.9);display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif">' +
-                                '<div style="background:#fff;border-radius:12px;padding:40px;max-width:480px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.3)">' +
-                                '<h2 style="color:#dc2626;margin:0 0 15px">Verification Failed</h2>' +
-                                '<p style="color:#4b5563;line-height:1.6;margin-bottom:25px">' + (data.error || 'Unable to verify. Please try again.') + '</p>' +
-                                '<button onclick="location.reload()" style="padding:12px 30px;background:#4a90d9;color:#fff;border:none;border-radius:8px;font-size:16px;cursor:pointer">Try Again</button>' +
-                                '</div></div>';
+                            // Show block message using safe DOM methods (no innerHTML with untrusted data)
+                            var overlay = document.createElement('div');
+                            overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.9);display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif';
+                            var box = document.createElement('div');
+                            box.style.cssText = 'background:#fff;border-radius:12px;padding:40px;max-width:480px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.3)';
+                            var h2 = document.createElement('h2');
+                            h2.style.cssText = 'color:#dc2626;margin:0 0 15px';
+                            h2.textContent = 'Verification Failed';
+                            var p = document.createElement('p');
+                            p.style.cssText = 'color:#4b5563;line-height:1.6;margin-bottom:25px';
+                            p.textContent = data.error || 'Unable to verify. Please try again.';
+                            var btn = document.createElement('button');
+                            btn.style.cssText = 'padding:12px 30px;background:#4a90d9;color:#fff;border:none;border-radius:8px;font-size:16px;cursor:pointer';
+                            btn.textContent = 'Try Again';
+                            btn.onclick = function() { location.reload(); };
+                            box.appendChild(h2);
+                            box.appendChild(p);
+                            box.appendChild(btn);
+                            overlay.appendChild(box);
+                            document.body.innerHTML = '';
+                            document.body.appendChild(overlay);
                         }
                     })
                     .catch(function(err) {
@@ -595,6 +617,7 @@ class SurveyFraudPrevention extends AbstractExternalModule
         $siteKey = $this->getSystemSetting('recaptcha-site-key');
         $ajaxUrl = $this->getUrl('ajax_handler.php', true, true);
         $csrfToken = $this->getCSRFToken();
+        $nonce = $this->getAjaxNonce();
         ?>
         <script src="https://www.google.com/recaptcha/api.js?render=<?= htmlspecialchars($siteKey) ?>"></script>
         <script>
@@ -630,6 +653,7 @@ class SurveyFraudPrevention extends AbstractExternalModule
                             body: 'action=verify_recaptcha&recaptcha_token=' + encodeURIComponent(token) +
                                   '&survey_hash=' + encodeURIComponent(<?= json_encode($surveyHash) ?>) +
                                   '&redcap_csrf_token=' + encodeURIComponent(<?= json_encode($csrfToken) ?>) +
+                                  '&sfp_nonce=' + encodeURIComponent(<?= json_encode($nonce) ?>) +
                                   '&survey_session_id=' + encodeURIComponent(<?= json_encode(session_id()) ?>) +
                                   '&session_seed=' + encodeURIComponent(<?= json_encode($_SESSION['otp_survey_context']['session_seed'] ?? '') ?>)
                         })
@@ -976,7 +1000,8 @@ class SurveyFraudPrevention extends AbstractExternalModule
         $resp = curl_exec($ch);
         $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $err = curl_error($ch);
-        
+        curl_close($ch);
+
         if ($err) {
             return ['success' => false, 'error' => 'Network error'];
         }
@@ -1049,7 +1074,8 @@ class SurveyFraudPrevention extends AbstractExternalModule
         $resp = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $err = curl_error($ch);
-        
+        curl_close($ch);
+
         if ($err || $httpCode !== 200 || empty($resp)) {
             $this->logEvent('Twilio Lookup failed: ' . ($err ?: "HTTP $httpCode"));
             return ['success' => false, 'error' => 'Lookup service unavailable'];
@@ -1182,7 +1208,7 @@ class SurveyFraudPrevention extends AbstractExternalModule
         $phoneHash = $this->generatePhoneHash($phone, $instrument);
         $searchMsg = self::PHONE_HASH_PREFIX . $phoneHash;
 
-        $this->logEvent("Phone reuse check - instrument: " . $instrument . ", hash: " . substr($phoneHash, 0, 16) . "...");
+        $this->logEvent("Phone reuse check - instrument: " . $instrument);
 
         $sql = "SELECT record WHERE message = ?";
         $result = $this->queryLogs($sql, [$searchMsg]);
@@ -1318,6 +1344,23 @@ class SurveyFraudPrevention extends AbstractExternalModule
     // =========================================================================
 
     /**
+     * Get or generate an AJAX nonce for the current session
+     *
+     * Creates a cryptographic nonce stored in the session. Used to validate
+     * that AJAX requests originate from our rendered page, not from external
+     * sites (CSRF protection for no-auth endpoints).
+     *
+     * @return string Hex-encoded nonce
+     */
+    private function getAjaxNonce()
+    {
+        if (empty($_SESSION['sfp_ajax_nonce'])) {
+            $_SESSION['sfp_ajax_nonce'] = bin2hex(random_bytes(32));
+        }
+        return $_SESSION['sfp_ajax_nonce'];
+    }
+
+    /**
      * Check if instrument requires verification
      *
      * @param string $instrument Instrument name
@@ -1433,8 +1476,9 @@ class SurveyFraudPrevention extends AbstractExternalModule
         $ajaxUrl = $this->getUrl('ajax_handler.php', true, true);
         $jsUrl = $this->getUrl('js/verification.js');
 
-        // Get CSRF token for AJAX requests
+        // Get CSRF token and nonce for AJAX requests
         $csrfToken = $this->getCSRFToken();
+        $nonce = $this->getAjaxNonce();
 
         $customMsg = $this->getProjectSetting('phone-custom-message')
             ?: 'To make sure you\'re a real person, please verify your phone number.';
@@ -1596,6 +1640,7 @@ class SurveyFraudPrevention extends AbstractExternalModule
             window.OTP_CONFIG = {
                 verifyUrl: <?= json_encode($ajaxUrl) ?>,
                 csrfToken: <?= json_encode($csrfToken) ?>,
+                sfpNonce: <?= json_encode($nonce) ?>,
                 surveyHash: <?= json_encode($surveyHash) ?>,
                 sessionSeed: <?= json_encode($sessionSeed) ?>,
                 surveySessionId: <?= json_encode(session_id()) ?>,

@@ -417,6 +417,9 @@
         if (config.csrfToken) {
             form.append('redcap_csrf_token', config.csrfToken);
         }
+        if (config.sfpNonce) {
+            form.append('sfp_nonce', config.sfpNonce);
+        }
 
         // Pass survey page session info so AJAX handler can write to the correct session
         if (config.surveySessionId) {

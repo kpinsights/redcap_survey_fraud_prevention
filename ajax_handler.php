@@ -23,6 +23,7 @@ namespace CERCHECW\SurveyFraudPrevention;
  */
 function respond($data) {
     header('Content-Type: application/json');
+    header('X-Content-Type-Options: nosniff');
     echo json_encode($data);
     exit;
 }
@@ -69,38 +70,52 @@ try {
 
     header('Content-Type: application/json');
     header('Cache-Control: no-store, no-cache, must-revalidate');
+    header('X-Content-Type-Options: nosniff');
 
-    // Sanitize inputs
-    $action = $_POST['action'] ?? '';
+    // Sanitize inputs with length limits to prevent oversized payloads
+    $action = substr($_POST['action'] ?? '', 0, 20);
     // Phone is sanitized to digits/+ only, then sent to Twilio API for verification (intended behavior)
-    $phone = preg_replace('/[^\d\+]/', '', $_POST['phone'] ?? '');
-    $code = preg_replace('/\D/', '', $_POST['code'] ?? '');
-    $hash = preg_replace('/[^a-zA-Z0-9]/', '', $_POST['survey_hash'] ?? '');
-    $recaptchaToken = $_POST['recaptcha_token'] ?? '';
-    $csrfToken = $_POST['redcap_csrf_token'] ?? '';
-    $surveySessionId = preg_replace('/[^a-zA-Z0-9,-]/', '', $_POST['survey_session_id'] ?? '');
-    $sessionSeed = preg_replace('/[^a-zA-Z0-9_]/', '', $_POST['session_seed'] ?? '');
+    $phone = substr(preg_replace('/[^\d\+]/', '', $_POST['phone'] ?? ''), 0, 20);
+    $code = substr(preg_replace('/\D/', '', $_POST['code'] ?? ''), 0, 10);
+    $hash = substr(preg_replace('/[^a-zA-Z0-9]/', '', $_POST['survey_hash'] ?? ''), 0, 128);
+    $recaptchaToken = substr($_POST['recaptcha_token'] ?? '', 0, 4096);
+    $csrfToken = substr($_POST['redcap_csrf_token'] ?? '', 0, 256);
+    $surveySessionId = substr(preg_replace('/[^a-zA-Z0-9,-]/', '', $_POST['survey_session_id'] ?? ''), 0, 128);
+    $sessionSeed = substr(preg_replace('/[^a-zA-Z0-9_]/', '', $_POST['session_seed'] ?? ''), 0, 256);
+    $nonce = substr($_POST['sfp_nonce'] ?? '', 0, 128);
 
     if (!$action) {
         respond(['success' => false, 'error' => 'No action specified']);
     }
 
-    // Verify CSRF token using REDCap's built-in method
-    // The module's checkCSRF method validates the token against the session
-    if (!empty($csrfToken) && method_exists($module, 'checkCSRF')) {
-        // REDCap EM framework handles CSRF validation
-        // Token is validated if present; for no-auth pages, we rely on session binding
+    // Validate nonce against the survey page's session.
+    // This replaces the previous no-op CSRF block and ensures requests
+    // originate from our rendered page (CSRF protection for no-auth endpoints).
+    if (empty($nonce) || empty($surveySessionId)) {
+        respond(['success' => false, 'error' => 'Invalid request. Please refresh the page.']);
+    }
+
+    $storedNonce = null;
+    $currentSid = session_id();
+    session_write_close();
+    session_id($surveySessionId);
+    session_start();
+    $storedNonce = $_SESSION['sfp_ajax_nonce'] ?? null;
+    session_write_close();
+    session_id($currentSid);
+    session_start();
+
+    if (!$storedNonce || !hash_equals($storedNonce, $nonce)) {
+        respond(['success' => false, 'error' => 'Invalid request. Please refresh the page.']);
     }
 
     $surveyContext = $_SESSION['otp_survey_context'] ?? null;
 
-    // Additional security: Verify survey context exists in session
-    // This ensures requests are tied to an active survey session
+    // Require survey context for all actions except validate_phone.
+    // This ensures requests are tied to an active survey session and
+    // prevents external callers from triggering OTP sends or verifications.
     if (!$surveyContext && $action !== 'validate_phone') {
-        // Allow validation without context, but other actions need survey context
-        if (empty($hash)) {
-            respond(['success' => false, 'error' => 'Invalid session. Please refresh the page and try again.']);
-        }
+        respond(['success' => false, 'error' => 'Invalid session. Please refresh the page and try again.']);
     }
 
     switch ($action) {
@@ -108,7 +123,7 @@ try {
             if (!$phone) {
                 respond(['success' => false, 'error' => 'Phone number required']);
             }
-            $surveyHash = $hash ?: ($surveyContext['survey_hash'] ?? '');
+            $surveyHash = $surveyContext['survey_hash'] ?? '';
             respond($module->sendOTP($phone, $surveyHash));
             break;
 
@@ -119,11 +134,11 @@ try {
             if (!$code) {
                 respond(['success' => false, 'error' => 'Code required']);
             }
-            $hash = $hash ?: ($surveyContext['survey_hash'] ?? '');
-            if (!$hash) {
+            $surveyHash = $surveyContext['survey_hash'] ?? '';
+            if (!$surveyHash) {
                 respond(['success' => false, 'error' => 'Survey context missing. Please refresh the page.']);
             }
-            $result = $module->verifyOTP($phone, $code, $hash);
+            $result = $module->verifyOTP($phone, $code, $surveyHash);
 
             // On success, write the OTP verified flag to the survey page's session
             if ($result['success'] && $surveySessionId && $sessionSeed) {
@@ -144,8 +159,8 @@ try {
             if (!$phone) {
                 respond(['success' => false, 'error' => 'Phone number required']);
             }
-            $hash = $hash ?: ($surveyContext['survey_hash'] ?? '');
-            $result = $module->validatePhoneCountry($phone, $hash);
+            $surveyHash = $hash ?: ($surveyContext['survey_hash'] ?? '');
+            $result = $module->validatePhoneCountry($phone, $surveyHash);
             respond($result['valid']
                 ? ['success' => true, 'country_code' => $result['country_code']]
                 : ['success' => false, 'error' => $result['error']]
@@ -156,7 +171,7 @@ try {
             if (!$recaptchaToken) {
                 respond(['success' => false, 'error' => 'reCAPTCHA token required']);
             }
-            $surveyHash = $hash ?: ($surveyContext['survey_hash'] ?? '');
+            $surveyHash = $surveyContext['survey_hash'] ?? '';
             if (!$surveyHash) {
                 respond(['success' => false, 'error' => 'Survey context missing. Please refresh the page.']);
             }
@@ -183,6 +198,7 @@ try {
 
 } catch (\Throwable $e) {
     header('Content-Type: application/json');
+    header('X-Content-Type-Options: nosniff');
     // Log the full error for administrators but don't expose details to users
     error_log('SurveyFraudPrevention AJAX error: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
     echo json_encode([
