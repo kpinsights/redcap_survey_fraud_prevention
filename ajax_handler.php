@@ -95,12 +95,17 @@ try {
         respond(['success' => false, 'error' => 'Invalid request. Please refresh the page.']);
     }
 
+    // Read nonce and survey context from the survey page's session
+    // (the AJAX handler runs in a separate session, so these values
+    // only exist in the survey page's session, not ours)
     $storedNonce = null;
+    $surveyContext = null;
     $currentSid = session_id();
     session_write_close();
     session_id($surveySessionId);
     session_start();
     $storedNonce = $_SESSION['sfp_ajax_nonce'] ?? null;
+    $surveyContext = $_SESSION['otp_survey_context'] ?? null;
     session_write_close();
     session_id($currentSid);
     session_start();
@@ -108,8 +113,6 @@ try {
     if (!$storedNonce || !hash_equals($storedNonce, $nonce)) {
         respond(['success' => false, 'error' => 'Invalid request. Please refresh the page.']);
     }
-
-    $surveyContext = $_SESSION['otp_survey_context'] ?? null;
 
     // Require survey context for all actions except validate_phone.
     // This ensures requests are tied to an active survey session and
