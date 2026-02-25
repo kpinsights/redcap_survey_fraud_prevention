@@ -170,7 +170,7 @@ class SurveyFraudPrevention extends AbstractExternalModule
 
                 if (!$ipCheck['ok']) {
                     $this->showIPBlockPage($ipCheck['reason'], $ipCheck['country'] ?? '');
-                    return;
+                    exit;
                 }
             }
         }
@@ -194,7 +194,7 @@ class SurveyFraudPrevention extends AbstractExternalModule
 
             if (empty($_SESSION[$otpKey])) {
                 $this->showPhoneVerification($survey_hash);
-                return;
+                exit;
             }
         }
 
@@ -1442,26 +1442,6 @@ class SurveyFraudPrevention extends AbstractExternalModule
         $msg = $messages[$reason] ?? 'Access not available from your current connection.';
         $showRetry = in_array($reason, ['vpn_detected', 'datacenter_detected', 'service_unavailable']);
         ?>
-        <script>
-        // Permanently disable the survey form so it cannot be submitted
-        // even if the block overlay is removed via browser DevTools
-        (function() {
-            var form = document.querySelector('form#form') || document.querySelector('form[name="form"]');
-            if (form) {
-                form.action = 'javascript:void(0)';
-                form.setAttribute('data-ip-blocked', 'true');
-                var inputs = form.querySelectorAll('input, select, textarea, button');
-                for (var i = 0; i < inputs.length; i++) {
-                    inputs[i].disabled = true;
-                }
-                form.addEventListener('submit', function(e) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    return false;
-                }, true);
-            }
-        })();
-        </script>
         <style>
             .block-overlay{position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:9999;display:flex;align-items:center;justify-content:center;font-family:system-ui,-apple-system,sans-serif}
             .block-box{background:#fff;border-radius:12px;padding:40px;max-width:480px;width:90%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.3)}
@@ -1553,50 +1533,6 @@ class SurveyFraudPrevention extends AbstractExternalModule
             /* Screen reader only - visually hidden but accessible */
             .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
         </style>
-
-        <script>
-        // Disable form to prevent direct POST bypass
-        (function() {
-            var form = document.querySelector('form#form') || document.querySelector('form[name="form"]');
-            if (form) {
-                // Store original action and remove it
-                window.__originalFormAction = form.action;
-                form.action = 'javascript:void(0)';
-                form.setAttribute('data-verification-pending', 'true');
-
-                // Disable all inputs
-                var inputs = form.querySelectorAll('input, select, textarea, button');
-                for (var i = 0; i < inputs.length; i++) {
-                    inputs[i].disabled = true;
-                    inputs[i].setAttribute('data-was-enabled', 'true');
-                }
-
-                // Block form submit event
-                form.addEventListener('submit', function(e) {
-                    if (form.getAttribute('data-verification-pending') === 'true') {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        return false;
-                    }
-                }, true);
-            }
-
-            // Function to re-enable form after verification (called from verification.js)
-            window.__enableFormAfterVerification = function() {
-                var form = document.querySelector('form#form') || document.querySelector('form[name="form"]');
-                if (form && window.__originalFormAction) {
-                    form.action = window.__originalFormAction;
-                    form.removeAttribute('data-verification-pending');
-
-                    var inputs = form.querySelectorAll('[data-was-enabled="true"]');
-                    for (var i = 0; i < inputs.length; i++) {
-                        inputs[i].disabled = false;
-                        inputs[i].removeAttribute('data-was-enabled');
-                    }
-                }
-            };
-        })();
-        </script>
 
         <!-- ARIA live region for screen reader announcements -->
         <div id="otp-live-region" class="sr-only" aria-live="polite" aria-atomic="true"></div>

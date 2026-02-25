@@ -246,15 +246,10 @@
                     verifyBtn.textContent = '✓ Verified';
                     verifyBtn.style.background = '#16a34a';
 
-                    // Re-enable the form now that verification passed
-                    if (typeof window.__enableFormAfterVerification === 'function') {
-                        window.__enableFormAfterVerification();
-                    }
-
+                    // Reload the page so the hook fires again with the
+                    // verified session flag — REDCap will render the form
                     setTimeout(function() {
-                        overlay.style.transition = 'opacity .3s';
-                        overlay.style.opacity = '0';
-                        setTimeout(function() { overlay.remove(); }, 300);
+                        location.reload();
                     }, 1000);
                 } else {
                     showMsg(resp.error || 'Wrong code', 'error');
