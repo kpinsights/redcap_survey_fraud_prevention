@@ -159,7 +159,8 @@ class SurveyFraudPrevention extends AbstractExternalModule
 
             if (!$ipCheck['ok']) {
                 $this->showIPBlockPage($ipCheck['reason'], $ipCheck['country'] ?? '');
-                exit;
+                $this->exitAfterHook();
+                return;
             }
         }
 
@@ -190,7 +191,8 @@ class SurveyFraudPrevention extends AbstractExternalModule
 
             if (empty($_SESSION[$otpKey])) {
                 $this->showPhoneVerification($survey_hash);
-                exit;
+                $this->exitAfterHook();
+                return;
             }
         }
 
