@@ -504,14 +504,6 @@ class SurveyFraudPrevention extends AbstractExternalModule
         $this->saveRecaptchaStatus($sessionSeed, true);
         $this->logEvent("reCAPTCHA passed - score: $score");
 
-        // Mark project-level verification so subsequent instruments skip re-verification
-        $ctx = $_SESSION['otp_survey_context'] ?? [];
-        $projectId = $ctx['project_id'] ?? null;
-        $eventId = $ctx['event_id'] ?? null;
-        if ($projectId && $eventId) {
-            $_SESSION[self::PROJECT_VERIFIED_SESSION . $projectId . '_' . $eventId] = true;
-        }
-
         return ['success' => true, 'score' => $score, 'reason' => 'verified'];
     }
 
@@ -946,13 +938,6 @@ class SurveyFraudPrevention extends AbstractExternalModule
             $sessionSeed = $ctx['session_seed'] ?? $surveyHash;
             $key = self::OTP_SESSION . hash('sha256', $sessionSeed . '_otp');
             $_SESSION[$key] = true;
-
-            // Mark project-level verification so subsequent instruments skip re-verification
-            $projectId = $ctx['project_id'] ?? null;
-            $eventId = $ctx['event_id'] ?? null;
-            if ($projectId && $eventId) {
-                $_SESSION[self::PROJECT_VERIFIED_SESSION . $projectId . '_' . $eventId] = true;
-            }
 
             if ($this->getProjectSetting('prevent-phone-reuse')) {
                 $ctx = $_SESSION['otp_survey_context'] ?? [];
