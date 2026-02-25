@@ -180,8 +180,12 @@ class SurveyFraudPrevention extends AbstractExternalModule
             $recaptchaKey = self::RECAPTCHA_SESSION . hash('sha256', $sessionSeed . '_recaptcha');
 
             if ($recaptchaTiming === 'page_load' && empty($_SESSION[$recaptchaKey])) {
-                // Inject reCAPTCHA script and handle verification via AJAX immediately
+                // Inject reCAPTCHA script and handle verification via AJAX.
+                // exitAfterHook prevents the form from rendering until
+                // reCAPTCHA passes and the page reloads.
                 $this->injectRecaptchaScript($survey_hash, 'page_load');
+                $this->exitAfterHook();
+                return;
             }
         }
 
@@ -556,8 +560,8 @@ class SurveyFraudPrevention extends AbstractExternalModule
                     .then(function(response) { return response.json(); })
                     .then(function(data) {
                         if (data.success) {
-                            // reCAPTCHA passed - session is marked, no reload needed
-                            console.log('reCAPTCHA verified (page_load)');
+                            // reCAPTCHA passed - reload so the hook can proceed to next layer
+                            location.reload();
                         } else {
                             // Show block message using safe DOM methods (no innerHTML with untrusted data)
                             var overlay = document.createElement('div');
