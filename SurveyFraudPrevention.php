@@ -135,15 +135,6 @@ class SurveyFraudPrevention extends AbstractExternalModule
             return;
         }
 
-        // Check if already verified on another instrument in this session.
-        // This prevents re-prompting when participants auto-continue between
-        // instruments, while still requiring verification for new sessions
-        // (e.g., someone accessing a later instrument via a shared link).
-        $projectKey = self::PROJECT_VERIFIED_SESSION . $project_id . '_' . $event_id;
-        if (!empty($_SESSION[$projectKey])) {
-            return;
-        }
-
         // Build a stable session seed from instrument identity (not survey_hash,
         // which changes on each page of a multi-page instrument and would
         // re-trigger verification when navigating between pages).
@@ -161,18 +152,23 @@ class SurveyFraudPrevention extends AbstractExternalModule
             'repeat_instance' => $repeat_instance
         ];
 
-        // Layer 1: IP check
+        // Layer 1: IP check — runs on every page load (not cached in session)
+        // so that IP changes mid-session are always caught
         if ($this->getProjectSetting('enable-ip-verification')) {
-            $ipKey = self::IP_SESSION . hash('sha256', $sessionSeed . '_ip');
+            $ipCheck = $this->checkIPLocation($sessionSeed);
 
-            if (empty($_SESSION[$ipKey])) {
-                $ipCheck = $this->checkIPLocation($sessionSeed);
-
-                if (!$ipCheck['ok']) {
-                    $this->showIPBlockPage($ipCheck['reason'], $ipCheck['country'] ?? '');
-                    exit;
-                }
+            if (!$ipCheck['ok']) {
+                $this->showIPBlockPage($ipCheck['reason'], $ipCheck['country'] ?? '');
+                exit;
             }
+        }
+
+        // Check if already verified on another instrument in this session.
+        // This skips reCAPTCHA/OTP re-prompting when participants auto-continue
+        // between instruments. IP check still runs above (always fresh).
+        $projectKey = self::PROJECT_VERIFIED_SESSION . $project_id . '_' . $event_id;
+        if (!empty($_SESSION[$projectKey])) {
+            return;
         }
 
         // Layer 2: reCAPTCHA v3 (invisible bot detection)
