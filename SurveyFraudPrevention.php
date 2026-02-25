@@ -1442,6 +1442,26 @@ class SurveyFraudPrevention extends AbstractExternalModule
         $msg = $messages[$reason] ?? 'Access not available from your current connection.';
         $showRetry = in_array($reason, ['vpn_detected', 'datacenter_detected', 'service_unavailable']);
         ?>
+        <script>
+        // Permanently disable the survey form so it cannot be submitted
+        // even if the block overlay is removed via browser DevTools
+        (function() {
+            var form = document.querySelector('form#form') || document.querySelector('form[name="form"]');
+            if (form) {
+                form.action = 'javascript:void(0)';
+                form.setAttribute('data-ip-blocked', 'true');
+                var inputs = form.querySelectorAll('input, select, textarea, button');
+                for (var i = 0; i < inputs.length; i++) {
+                    inputs[i].disabled = true;
+                }
+                form.addEventListener('submit', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    return false;
+                }, true);
+            }
+        })();
+        </script>
         <style>
             .block-overlay{position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:9999;display:flex;align-items:center;justify-content:center;font-family:system-ui,-apple-system,sans-serif}
             .block-box{background:#fff;border-radius:12px;padding:40px;max-width:480px;width:90%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.3)}
