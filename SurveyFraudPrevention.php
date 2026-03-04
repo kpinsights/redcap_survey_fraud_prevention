@@ -265,15 +265,15 @@ class SurveyFraudPrevention extends AbstractExternalModule
      * country whitelist, VPN/proxy blocking, and datacenter IP blocking.
      * The IP address is used transiently and never stored.
      *
-     * @param string $surveyHash Survey identifier for session storage
+     * @param string $sessionSeed Session seed for session storage
      * @return array Result with 'ok' (bool), 'country' (string), 'reason' (string)
      */
-    public function checkIPLocation($surveyHash)
+    public function checkIPLocation($sessionSeed)
     {
         $geoService = $this->getSystemSetting('ip-geolocation-service');
 
         if ($geoService === 'disabled') {
-            $this->saveIPStatus($surveyHash, true, '');
+            $this->saveIPStatus($sessionSeed, true, '');
             return ['ok' => true, 'country' => '', 'reason' => 'geo_disabled'];
         }
 
@@ -287,7 +287,7 @@ class SurveyFraudPrevention extends AbstractExternalModule
 
             if ($failMode === 'fail-open') {
                 $this->logEvent('IP check skipped - API down, fail-open policy');
-                $this->saveIPStatus($surveyHash, true, '');
+                $this->saveIPStatus($sessionSeed, true, '');
                 return ['ok' => true, 'country' => '', 'reason' => 'api_down'];
             }
 
@@ -315,7 +315,7 @@ class SurveyFraudPrevention extends AbstractExternalModule
         }
 
         $this->logEvent('IP check passed - Country: ' . $geo['country']);
-        $this->saveIPStatus($surveyHash, true, $geo['country']);
+        $this->saveIPStatus($sessionSeed, true, $geo['country']);
 
         return ['ok' => true, 'country' => $geo['country'], 'reason' => 'verified'];
     }
@@ -588,7 +588,6 @@ class SurveyFraudPrevention extends AbstractExternalModule
                             box.appendChild(p);
                             box.appendChild(btn);
                             overlay.appendChild(box);
-                            document.body.innerHTML = '';
                             document.body.appendChild(overlay);
                         }
                     })
@@ -903,7 +902,7 @@ class SurveyFraudPrevention extends AbstractExternalModule
 
         if ($result['success']) {
             $_SESSION['otp_pending_phone'] = $phone;
-            $_SESSION['otp_pending_country'] = $validation['country_code'];
+            //$_SESSION['otp_pending_country'] = $validation['country_code'];
 
             $this->bumpRateLimit();
             $this->bumpIPRateLimit();
@@ -1578,7 +1577,7 @@ class SurveyFraudPrevention extends AbstractExternalModule
                         <input type="tel" id="otp-phone" placeholder="+1 234 567 8900" autocomplete="tel" aria-describedby="phone-hint" aria-required="true">
                         <?php if ($allowedCountries): ?>
                             <div id="phone-hint" class="country-hint">
-                                Accepted: <?= implode(', ', array_map(function($c) use ($countryLabels) { return $countryLabels[$c] ?? $c; }, $allowedCountries)) ?>
+                                Accepted: <?= implode(', ', array_map(function($c) use ($countryLabels) { return htmlspecialchars($countryLabels[$c] ?? $c); }, $allowedCountries)) ?>
                             </div>
                         <?php endif; ?>
                     </div>

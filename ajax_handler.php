@@ -79,7 +79,6 @@ try {
     $code = substr(preg_replace('/\D/', '', $_POST['code'] ?? ''), 0, 10);
     $hash = substr(preg_replace('/[^a-zA-Z0-9]/', '', $_POST['survey_hash'] ?? ''), 0, 128);
     $recaptchaToken = substr($_POST['recaptcha_token'] ?? '', 0, 4096);
-    $csrfToken = substr($_POST['redcap_csrf_token'] ?? '', 0, 256);
     $surveySessionId = substr(preg_replace('/[^a-zA-Z0-9,-]/', '', $_POST['survey_session_id'] ?? ''), 0, 128);
     $sessionSeed = substr(preg_replace('/[^a-zA-Z0-9_]/', '', $_POST['session_seed'] ?? ''), 0, 256);
     $nonce = substr($_POST['sfp_nonce'] ?? '', 0, 128);
