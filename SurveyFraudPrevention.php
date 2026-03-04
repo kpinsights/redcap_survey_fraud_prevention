@@ -22,7 +22,7 @@ class SurveyFraudPrevention extends AbstractExternalModule
     /** @var string Twilio Verify API base URL */
     private const TWILIO_API = 'https://verify.twilio.com/v2/Services/';
 
-    /** @var string ip-api.com endpoint for geolocation */
+    /** @var string ip-api.com endpoint for geolocation (HTTP only — free tier does not support HTTPS) */
     private const IPAPI_ENDPOINT = 'http://ip-api.com/json/';
 
     /** @var string ipinfo.io endpoint for geolocation */
@@ -618,16 +618,27 @@ class SurveyFraudPrevention extends AbstractExternalModule
         $ajaxUrl = $this->getUrl('ajax_handler.php', true, true);
         $csrfToken = $this->getCSRFToken();
         $nonce = $this->getAjaxNonce();
+        $failMode = $this->getProjectSetting('recaptcha-failure-mode') ?: 'fail-open';
         ?>
         <script src="https://www.google.com/recaptcha/api.js?render=<?= htmlspecialchars($siteKey) ?>"></script>
         <script>
         (function() {
+            var failClosed = <?= json_encode($failMode === 'fail-closed') ?>;
+
             // Find the survey form and intercept submit
             var form = document.querySelector('form[name="form"]') || document.querySelector('form#form');
             if (!form) return;
 
             var originalSubmit = form.onsubmit;
             var recaptchaVerified = false;
+
+            function restoreBtn(submitBtn, originalText) {
+                if (submitBtn) {
+                    submitBtn.disabled = false;
+                    if (submitBtn.tagName === 'INPUT') submitBtn.value = originalText;
+                    else submitBtn.textContent = originalText;
+                }
+            }
 
             form.addEventListener('submit', function(e) {
                 // If already verified, let submit proceed
@@ -660,34 +671,24 @@ class SurveyFraudPrevention extends AbstractExternalModule
                         .then(function(response) { return response.json(); })
                         .then(function(data) {
                             if (data.success) {
-                                // reCAPTCHA passed, submit form
                                 recaptchaVerified = true;
-                                if (submitBtn) {
-                                    submitBtn.disabled = false;
-                                    if (submitBtn.tagName === 'INPUT') submitBtn.value = originalText;
-                                    else submitBtn.textContent = originalText;
-                                }
+                                restoreBtn(submitBtn, originalText);
                                 form.submit();
                             } else {
-                                // Show error
                                 alert(data.error || 'Verification failed. Please try again.');
-                                if (submitBtn) {
-                                    submitBtn.disabled = false;
-                                    if (submitBtn.tagName === 'INPUT') submitBtn.value = originalText;
-                                    else submitBtn.textContent = originalText;
-                                }
+                                restoreBtn(submitBtn, originalText);
                             }
                         })
                         .catch(function(err) {
                             console.error('reCAPTCHA error:', err);
-                            // On error, allow submit (fail-open behavior for UX)
-                            recaptchaVerified = true;
-                            if (submitBtn) {
-                                submitBtn.disabled = false;
-                                if (submitBtn.tagName === 'INPUT') submitBtn.value = originalText;
-                                else submitBtn.textContent = originalText;
+                            if (failClosed) {
+                                alert('Verification service unavailable. Please try again later.');
+                                restoreBtn(submitBtn, originalText);
+                            } else {
+                                recaptchaVerified = true;
+                                restoreBtn(submitBtn, originalText);
+                                form.submit();
                             }
-                            form.submit();
                         });
                     });
                 });
@@ -1229,26 +1230,6 @@ class SurveyFraudPrevention extends AbstractExternalModule
             'allowed' => false,
             'error' => 'This phone number has already been used for this survey.'
         ];
-    }
-
-    /**
-     * Check if a record exists in the database
-     *
-     * @param string $record Record ID to check
-     * @return bool True if record has any data
-     */
-    private function recordHasData($record)
-    {
-        if (empty($record)) {
-            return false;
-        }
-
-        $projectId = $this->getProjectId();
-        $dataTable = \REDCap::getDataTable($projectId);
-        $sql = "SELECT 1 FROM `$dataTable` WHERE project_id = ? AND record = ? LIMIT 1";
-        $result = $this->query($sql, [$projectId, $record]);
-
-        return $result->num_rows > 0;
     }
 
     /**

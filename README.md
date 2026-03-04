@@ -191,28 +191,22 @@ README.md              This file
 
 1. The `redcap_survey_page_top` hook fires when a survey page loads
 2. The module checks if the current instrument requires verification
-3. If IP verification is enabled, the geolocation API is called
-4. If the IP check fails, a block page is displayed and execution stops
-5. If reCAPTCHA is enabled with "page load" timing, verification runs immediately via AJAX
-6. If phone verification is enabled:
-   - The underlying REDCap form is disabled (action changed, inputs disabled)
-   - The verification overlay is displayed
-7. If reCAPTCHA uses "send code" timing, it runs when the user clicks Send Code
-8. The Twilio Verify API handles SMS delivery and code validation
-9. Upon successful verification, the form is re-enabled and the overlay removed
-10. If reCAPTCHA uses "survey submit" timing, it runs when the user submits the survey
-11. Verification status is stored in the PHP session
+3. If already verified on another instrument in this project/event (cross-instrument verification), skip reCAPTCHA and OTP layers
+4. If IP verification is enabled, the geolocation API is called on every page load (not cached, so IP changes mid-session are caught)
+5. If the IP check fails, a block page is displayed and `exitAfterHook()` prevents the survey form from rendering
+6. If reCAPTCHA is enabled with "page load" timing, verification runs immediately via AJAX; `exitAfterHook()` prevents form rendering until it passes
+7. If phone verification is enabled, the verification overlay is displayed and `exitAfterHook()` prevents the survey form from rendering
+8. If reCAPTCHA uses "send code" timing, it runs when the user clicks Send Code
+9. The Twilio Verify API handles SMS delivery and code validation
+10. Upon successful verification, the page reloads and the hook allows the survey form to render
+11. If reCAPTCHA uses "survey submit" timing, it runs when the user submits the survey
+12. Verification status is stored in the PHP session
 
 ### Form Protection
 
-When phone verification is enabled, the module disables the underlying REDCap form until verification completes:
+When any verification layer is active (IP block, reCAPTCHA, or phone OTP), the module uses REDCap's `exitAfterHook()` to prevent the survey form from rendering entirely. The survey form HTML is never sent to the browser until all verification layers pass.
 
-- Form action is changed to `javascript:void(0)`
-- All form inputs are disabled
-- Submit events are blocked by an event listener
-- Only after successful phone verification is the form restored
-
-This prevents bypass attempts where an attacker removes the verification overlay using browser developer tools.
+This is a server-side protection that cannot be bypassed via browser developer tools, unlike client-side approaches (disabling inputs, hiding forms) which can be circumvented by removing overlay elements.
 
 ### Phone Number Reuse Prevention
 
@@ -250,14 +244,24 @@ To apply for CLNPC authorization, see: https://help.twilio.com/articles/36000456
 
 ### Rate Limiting
 
-The module can limit OTP requests per session. The default is 5 requests per hour. This prevents repeated code requests.
+The module enforces rate limits at two levels:
+
+- **Session-based**: Limits OTP requests per browser session (default: 5 per hour). Resets if the user clears cookies.
+- **DB-backed IP rate limit**: Limits OTP requests per IP address (10 per hour) using hashed IP entries stored in the module log. Persists across sessions and prevents distributed abuse from the same IP. Only a SHA-256 hash of the IP is stored (not the raw IP). Stale entries are automatically cleaned up after 1 hour.
 
 ### Session Management
 
-Verification status is stored in the PHP session using SHA-256 hashed keys derived from the survey hash. This means:
+Verification status is stored in the PHP session using SHA-256 hashed keys derived from a stable session seed (project ID + instrument + event ID). This means:
 
-- Refreshing the page will not trigger re-verification
+- Refreshing the page or navigating between pages of a multi-page instrument will not trigger re-verification
 - Opening the survey in a new browser or after session expiration will require re-verification
+- Once verified on one instrument, subsequent instruments in the same project/event skip reCAPTCHA and OTP (IP check still runs fresh)
+
+### Security
+
+- **Nonce-based CSRF protection**: AJAX requests are validated with a cryptographic nonce stored in the session. This protects the no-auth AJAX endpoint from cross-site request forgery since REDCap's built-in CSRF tokens are not available for unauthenticated survey pages.
+- **Input sanitization**: All AJAX inputs are sanitized with regex filtering and length limits to prevent oversized payloads and injection attacks.
+- **XSS prevention**: All user-facing output uses `htmlspecialchars()` or safe DOM methods (no `innerHTML` with untrusted data).
 
 ## Authors
 
