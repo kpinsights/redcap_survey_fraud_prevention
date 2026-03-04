@@ -49,6 +49,12 @@ class SurveyFraudPrevention extends AbstractExternalModule
     /** @var int Rate limit window in hours */
     private const RATE_LIMIT_HOURS = 1;
 
+    /** @var int Max OTP requests per IP per hour (DB-backed) */
+    private const IP_RATE_LIMIT_PER_HOUR = 10;
+
+    /** @var string Prefix for IP rate limit log entries */
+    private const IP_RATE_PREFIX = 'ip_rate:';
+
     /** @var string Prefix for phone hash log entries */
     private const PHONE_HASH_PREFIX = 'phone_hash:';
 
@@ -876,6 +882,12 @@ class SurveyFraudPrevention extends AbstractExternalModule
             return ['success' => false, 'error' => 'Too many attempts. Please wait before trying again.'];
         }
 
+        // DB-backed IP rate limit (persists across sessions)
+        if ($this->getProjectSetting('enable-rate-limiting') && !$this->checkIPRateLimit()) {
+            $this->logEvent('OTP blocked by IP rate limit');
+            return ['success' => false, 'error' => 'Too many requests from your network. Please try again later.'];
+        }
+
         $sid = $this->getSystemSetting('twilio-account-sid');
         $token = $this->getSystemSetting('twilio-auth-token');
         $serviceSid = $this->getSystemSetting('twilio-verify-service-sid');
@@ -893,6 +905,7 @@ class SurveyFraudPrevention extends AbstractExternalModule
             $_SESSION['otp_pending_country'] = $validation['country_code'];
 
             $this->bumpRateLimit();
+            $this->bumpIPRateLimit();
             $this->logEvent('OTP sent - Country: ' . $validation['country_code']);
 
             return [
@@ -1324,6 +1337,53 @@ class SurveyFraudPrevention extends AbstractExternalModule
         $key = 'otp_rate_limit';
         if (!isset($_SESSION[$key])) $_SESSION[$key] = [];
         $_SESSION[$key][] = time();
+    }
+
+    /**
+     * Check DB-backed IP rate limit
+     *
+     * Hashes the client IP with the current hour bucket and counts
+     * previous requests stored in the module log. This persists across
+     * sessions and prevents distributed OTP abuse from the same IP.
+     * No raw IP is stored — only a SHA-256 hash.
+     *
+     * Also cleans up stale entries older than 1 hour to prevent
+     * the log table from growing indefinitely.
+     *
+     * @return bool True if request is allowed
+     */
+    private function checkIPRateLimit()
+    {
+        $ip = $this->getClientIP();
+        if (!$ip) return true; // Can't determine IP, fail open
+
+        // Clean up stale rate limit entries older than 1 hour
+        $cutoff = date('Y-m-d H:i:s', time() - 3600);
+        $this->removeLogs("message LIKE ? AND timestamp < ?", [self::IP_RATE_PREFIX . '%', $cutoff]);
+
+        $hourBucket = date('Y-m-d-H');
+        $ipHash = hash('sha256', $ip . '|' . $hourBucket);
+        $msg = self::IP_RATE_PREFIX . $ipHash;
+
+        $sql = "SELECT COUNT(1) as cnt WHERE message = ?";
+        $result = $this->queryLogs($sql, [$msg]);
+        $row = $result->fetch_assoc();
+        $count = (int)($row['cnt'] ?? 0);
+
+        return $count < self::IP_RATE_LIMIT_PER_HOUR;
+    }
+
+    /**
+     * Record an OTP send in the DB-backed IP rate limit
+     */
+    private function bumpIPRateLimit()
+    {
+        $ip = $this->getClientIP();
+        if (!$ip) return;
+
+        $hourBucket = date('Y-m-d-H');
+        $ipHash = hash('sha256', $ip . '|' . $hourBucket);
+        $this->log(self::IP_RATE_PREFIX . $ipHash);
     }
 
     // =========================================================================
