@@ -109,6 +109,12 @@ try {
     session_id($currentSid);
     session_start();
 
+    // Make survey context available to module methods (logEvent, sendOTP, verifyOTP)
+    // which read $_SESSION['otp_survey_context'] for record/instrument context
+    if ($surveyContext) {
+        $_SESSION['otp_survey_context'] = $surveyContext;
+    }
+
     if (!$storedNonce || !hash_equals($storedNonce, $nonce)) {
         respond(['success' => false, 'error' => 'Invalid request. Please refresh the page.']);
     }
