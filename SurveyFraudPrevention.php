@@ -1197,7 +1197,8 @@ class SurveyFraudPrevention extends AbstractExternalModule
      * - Same phone on different instrument = allowed (longitudinal studies)
      *
      * @param string $phone Phone number to check
-     * @param string|null $currentRecord Current record ID (not used in current logic)
+     * @param string|null $currentRecord Current record ID; if it matches the
+     *        record the phone was previously bound to, reuse is allowed
      * @return array Result with 'allowed' (bool) and 'error' (string)
      */
     private function checkPhoneReuse($phone, $currentRecord)
@@ -1222,6 +1223,13 @@ class SurveyFraudPrevention extends AbstractExternalModule
 
         $row = $result->fetch_assoc();
         $existingRecord = $row['record'];
+
+        // Same participant returning to their own record (e.g. to finish an
+        // incomplete survey) is not reuse - only block a different record.
+        if ($currentRecord && $existingRecord === $currentRecord) {
+            $this->logEvent("Phone reuse check - same record ('$currentRecord') returning, allowing");
+            return ['allowed' => true, 'error' => ''];
+        }
 
         $this->logEvent("Phone reuse BLOCKED - already used for instrument '$instrument' by record: " . $existingRecord);
 
