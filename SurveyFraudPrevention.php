@@ -1178,7 +1178,6 @@ class SurveyFraudPrevention extends AbstractExternalModule
         // ARE recommended for this check), not the dial code prefix.
         $riskExemptCountries = ['US', 'CA'];
         $isRiskExempt = in_array($lookup['country_code'] ?? '', $riskExemptCountries);
-        $this->logEvent('DEBUG risk exemption check - country_code: ' . ($lookup['country_code'] ?? 'null') . ', isRiskExempt: ' . ($isRiskExempt ? 'true' : 'false'));
 
         if (!empty($riskThreshold) && !$isRiskExempt && $lookup['risk_score'] !== null) {
             $thresholds = ['mild' => 60, 'moderate' => 75, 'high' => 90];
