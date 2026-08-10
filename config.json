@@ -304,8 +304,17 @@
             }
         },
         {
+            "key": "line-risk-header",
+            "name": "<hr><h6>Line Type & Fraud Risk Filtering</h6><p style='color:#666;'>These checks share a single Twilio Lookup API call ($0.008 per lookup, charged once even if multiple options below are enabled).</p>",
+            "type": "descriptive",
+            "branchingLogic": {
+                "field": "enable-phone-otp",
+                "value": "1"
+            }
+        },
+        {
             "key": "block-voip",
-            "name": "<b>Block VoIP Numbers</b><br><small>Reject internet-based phone numbers. Uses Twilio Lookup API Line Type Intelligence ($0.008 per lookup). <b>Note:</b> Canadian numbers require <a href='https://help.twilio.com/articles/360004563433' target='_blank'>CLNPC authorization</a>.</small>",
+            "name": "<b>Block VoIP Numbers</b><br><small>Reject internet-based phone numbers. <b>Note:</b> Canadian numbers require <a href='https://help.twilio.com/articles/360004563433' target='_blank'>CLNPC authorization</a>.</small>",
             "type": "dropdown",
             "choices": [
                 {"value": "", "name": "Disabled (allow all VoIP)"},
@@ -326,6 +335,52 @@
                 "conditions": [
                     {"field": "block-voip", "value": "non-fixed"},
                     {"field": "block-voip", "value": "all"}
+                ]
+            }
+        },
+        {
+            "key": "block-landline",
+            "name": "<b>Block Landline Numbers</b><br><small>Reject landline numbers, which cannot receive SMS anyway</small>",
+            "type": "checkbox",
+            "branchingLogic": {
+                "field": "enable-phone-otp",
+                "value": "1"
+            }
+        },
+        {
+            "key": "landline-block-message",
+            "name": "<b>Custom Landline Block Message</b><br><small>Message shown when a landline number is detected (leave blank for default)</small>",
+            "type": "textarea",
+            "branchingLogic": {
+                "field": "block-landline",
+                "value": "1"
+            }
+        },
+        {
+            "key": "sms-pumping-risk-threshold",
+            "name": "<b>Block by SMS Pumping Fraud Risk Score</b><br><small>Uses Twilio's fraud risk score (0-100) for the number. Choose the sensitivity for blocking. <b>Note:</b> Twilio does not recommend or support this check for US/Canada numbers, so it is automatically skipped for those numbers regardless of this setting.</small>",
+            "type": "dropdown",
+            "choices": [
+                {"value": "", "name": "Disabled (no fraud risk check)"},
+                {"value": "high", "name": "Block High Risk Only (score ≥ 90) - Recommended"},
+                {"value": "moderate", "name": "Block Moderate+ Risk (score ≥ 75)"},
+                {"value": "mild", "name": "Block Mild+ Risk (score ≥ 60)"}
+            ],
+            "branchingLogic": {
+                "field": "enable-phone-otp",
+                "value": "1"
+            }
+        },
+        {
+            "key": "sms-risk-block-message",
+            "name": "<b>Custom Fraud Risk Block Message</b><br><small>Message shown when a number is blocked for high fraud risk (leave blank for default)</small>",
+            "type": "textarea",
+            "branchingLogic": {
+                "type": "or",
+                "conditions": [
+                    {"field": "sms-pumping-risk-threshold", "value": "high"},
+                    {"field": "sms-pumping-risk-threshold", "value": "moderate"},
+                    {"field": "sms-pumping-risk-threshold", "value": "mild"}
                 ]
             }
         },

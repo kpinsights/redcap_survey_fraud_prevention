@@ -1043,13 +1043,15 @@ class SurveyFraudPrevention extends AbstractExternalModule
     }
 
     /**
-     * Check phone line type via Twilio Lookup API
+     * Check phone line type and fraud risk via Twilio Lookup API
      *
      * Uses Twilio's Lookup v2 API to determine if the phone number is
-     * mobile, landline, or VoIP. This has per-request costs (~$0.005).
+     * mobile, landline, or VoIP, and its SMS pumping fraud risk score.
+     * Both fields are requested in a single call (one charge, ~$0.008)
+     * regardless of how many of the resulting checks are enabled.
      *
      * @param string $phone Phone number in E.164 format
-     * @return array Result with 'success', 'line_type', and 'carrier'
+     * @return array Result with 'success', 'line_type', 'carrier', and 'risk_score'
      */
     private function lookupLineType($phone)
     {
@@ -1062,7 +1064,7 @@ class SurveyFraudPrevention extends AbstractExternalModule
 
         // Phone is already validated via regex in sendOTP() before reaching here.
         // Sending to Twilio Lookup API is the intended behavior for VoIP detection.
-        $url = self::TWILIO_LOOKUP_API . urlencode($phone) . '?Fields=line_type_intelligence';
+        $url = self::TWILIO_LOOKUP_API . urlencode($phone) . '?Fields=line_type_intelligence,sms_pumping_risk';
 
         $ch = curl_init($url);
         curl_setopt_array($ch, [
@@ -1082,6 +1084,7 @@ class SurveyFraudPrevention extends AbstractExternalModule
         }
 
         $data = json_decode($resp, true);
+        $countryCode = $data['country_code'] ?? null;
         $lineTypeData = $data['line_type_intelligence'] ?? [];
         $lineType = $lineTypeData['type'] ?? null;
         $carrier = $lineTypeData['carrier_name'] ?? '';
@@ -1099,18 +1102,23 @@ class SurveyFraudPrevention extends AbstractExternalModule
             return ['success' => false, 'error' => "Lookup error: $errorCode"];
         }
 
+        $riskData = $data['sms_pumping_risk'] ?? [];
+        $riskScore = $riskData['sms_pumping_risk_score'] ?? null;
+
         $typeDisplay = $lineType ?: 'unknown';
-        $this->logEvent("Line type lookup: $typeDisplay" . ($carrier ? " ($carrier)" : ''));
+        $this->logEvent("Line type lookup: $typeDisplay" . ($carrier ? " ($carrier)" : '') . ($riskScore !== null ? ", risk score $riskScore" : ''));
 
         return [
             'success' => true,
             'line_type' => $lineType,
-            'carrier' => $carrier
+            'carrier' => $carrier,
+            'risk_score' => $riskScore,
+            'country_code' => $countryCode
         ];
     }
 
     /**
-     * Check if phone line type is allowed
+     * Check if phone line type and fraud risk score are allowed
      *
      * @param string $phone Phone number in E.164 format
      * @return array Result with 'allowed' (bool) and 'error' (string)
@@ -1118,8 +1126,10 @@ class SurveyFraudPrevention extends AbstractExternalModule
     private function checkLineType($phone)
     {
         $blockVoip = $this->getProjectSetting('block-voip');
+        $blockLandline = $this->getProjectSetting('block-landline');
+        $riskThreshold = $this->getProjectSetting('sms-pumping-risk-threshold');
 
-        if (empty($blockVoip)) {
+        if (empty($blockVoip) && empty($blockLandline) && empty($riskThreshold)) {
             return ['allowed' => true, 'error' => ''];
         }
 
@@ -1133,7 +1143,7 @@ class SurveyFraudPrevention extends AbstractExternalModule
 
         $lineType = strtolower($lookup['line_type'] ?? '');
 
-        // VoIP blocking logic
+        // VoIP blocking
         if (!empty($blockVoip)) {
             $isVoip = false;
 
@@ -1142,13 +1152,41 @@ class SurveyFraudPrevention extends AbstractExternalModule
                 $isVoip = ($lineType === 'nonfixedvoip');
             } elseif ($blockVoip === 'all') {
                 // Block all VoIP types
-                $isVoip = in_array($lineType, ['voip', 'nonfixedvoip', 'fixedvoip']);
+                $isVoip = in_array($lineType, ['nonfixedvoip', 'fixedvoip']);
             }
 
             if ($isVoip) {
                 $msg = $this->getProjectSetting('voip-block-message')
                     ?: 'Internet-based phone numbers (VoIP) are not accepted. Please use a mobile phone number.';
                 $this->logEvent('Blocked: VoIP number detected (' . $lineType . ') - ' . ($lookup['carrier'] ?? 'unknown carrier'));
+                return ['allowed' => false, 'error' => $msg];
+            }
+        }
+
+        // Landline blocking
+        if (!empty($blockLandline) && $lineType === 'landline') {
+            $msg = $this->getProjectSetting('landline-block-message')
+                ?: 'Landline numbers are not accepted. Please use a mobile phone number.';
+            $this->logEvent('Blocked: Landline number detected');
+            return ['allowed' => false, 'error' => $msg];
+        }
+
+        // SMS pumping fraud risk blocking
+        // Twilio doesn't recommend this check for US/CA - not a common target for
+        // SMS pumping fraud, and the algorithm isn't tuned for that traffic.
+        // Note this is the ISO country (e.g. Caribbean nations also use +1 but
+        // ARE recommended for this check), not the dial code prefix.
+        $riskExemptCountries = ['US', 'CA'];
+        $isRiskExempt = in_array($lookup['country_code'] ?? '', $riskExemptCountries);
+
+        if (!empty($riskThreshold) && !$isRiskExempt && $lookup['risk_score'] !== null) {
+            $thresholds = ['mild' => 60, 'moderate' => 75, 'high' => 90];
+            $minScore = $thresholds[$riskThreshold] ?? null;
+
+            if ($minScore !== null && $lookup['risk_score'] >= $minScore) {
+                $msg = $this->getProjectSetting('sms-risk-block-message')
+                    ?: 'This phone number could not be verified. Please try a different number.';
+                $this->logEvent('Blocked: SMS pumping fraud risk score ' . $lookup['risk_score'] . ' >= ' . $minScore);
                 return ['allowed' => false, 'error' => $msg];
             }
         }

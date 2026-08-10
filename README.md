@@ -120,7 +120,7 @@ Project administrators can configure the following options:
 - Select allowed countries for phone numbers
 - Configure North American (+1) number handling (accept both CA/US or match IP)
 - Prevent phone number reuse (one phone per instrument)
-- Block VoIP numbers using Twilio Lookup API (optional, costs extra)
+- Block VoIP, landline, or high fraud-risk numbers using Twilio Lookup API (optional, costs extra)
 - Customize the verification message
 
 **Rate Limiting**
@@ -218,9 +218,9 @@ The logic is per-instrument:
 
 The phone number itself is never stored. Only a SHA-256 hash (which includes the project ID and instrument name) is saved to REDCap's module log table.
 
-### VoIP Blocking
+### Line Type & Fraud Risk Filtering
 
-The module can optionally block VoIP numbers (internet-based phone numbers commonly used for fraud). This feature uses Twilio's Lookup API with Line Type Intelligence.
+The module can optionally block VoIP numbers, landline numbers, and numbers with a high SMS pumping fraud risk score. All three checks share a single Twilio Lookup API call, so enabling more than one adds no extra cost.
 
 **Line Types Detected:**
 - `mobile` - Mobile phone numbers
@@ -234,11 +234,21 @@ The module can optionally block VoIP numbers (internet-based phone numbers commo
 - Block Non-Fixed VoIP Only: Blocks Google Voice, TextNow, etc.
 - Block All VoIP: Blocks all internet-based numbers
 
-**Cost:** $0.008 per Lookup API request.
+**Landline Blocking:**
+- Optional checkbox to reject landline numbers, which cannot receive SMS anyway.
+
+**SMS Pumping Fraud Risk Score:**
+- Twilio scores each number 0-100 for SMS pumping fraud risk (higher = riskier).
+- Block High Risk Only (score ≥ 90): catches only the clearest fraud cases.
+- Block Moderate+ Risk (score ≥ 75): moderately strict.
+- Block Mild+ Risk (score ≥ 60): most aggressive, higher chance of blocking legitimate numbers.
+- **Automatically skipped for US and Canadian numbers.** Twilio does not recommend this check for US/CA, since these regions are not common targets for SMS pumping fraud and the underlying algorithm isn't tuned for that traffic. This exemption is based on the number's actual country (from Twilio's lookup), not its dial code — Caribbean nations that also use the +1 dial code (e.g. Jamaica, Trinidad and Tobago) are still covered by this check.
+
+**Cost:** $0.008 per Lookup API request, charged once per phone number regardless of how many of the above checks are enabled.
 
 **Canadian Phone Numbers:**
 
-Line type lookup for Canadian phone numbers requires authorization from the Canadian Local Number Portability Consortium (CLNPC). Without this authorization, Twilio returns error code 60601 and VoIP blocking will not work for Canadian numbers.
+Line type lookup for Canadian phone numbers requires authorization from the Canadian Local Number Portability Consortium (CLNPC). Without this authorization, Twilio returns error code 60601 and none of the checks above will work for Canadian numbers.
 
 To apply for CLNPC authorization, see: https://help.twilio.com/articles/360004563433
 
